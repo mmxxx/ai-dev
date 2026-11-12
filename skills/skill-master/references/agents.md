@@ -1,291 +1,233 @@
 # Skill + Agent Pattern
 
-Subagents handle context-heavy subtasks for orchestrator skills. Each runs in isolated context, performs work, and returns results (or modifies files directly).
+Subagents isolate context-heavy work from the orchestrator. A skill holds reusable methodology;
+an agent adds a bounded role, necessary tools, and a result contract.
 
-## Why Subagents
+## Contents
 
-The orchestrator's context window is limited. Loading a skill, conversation history, and project context already consumes significant space. If the orchestrator opens many files, runs extensive analysis, or generates verbose output, context fills up and quality degrades.
+- [Runtime-neutral orchestration](#runtime-neutral-orchestration)
+- [When to delegate](#when-to-delegate)
+- [Inline and dedicated agents](#inline-and-dedicated-agents)
+- [Agent file format](#agent-file-format)
+- [Reviewer contract](#reviewer-contract)
+- [Other agent contracts](#other-agent-contracts)
+- [Orchestrator responsibilities](#orchestrator-responsibilities)
+- [Invoking agents from skills](#invoking-agents-from-skills)
 
-**Solution:** Delegate heavy work to subagents. Each runs in isolated context, performs its task, and returns a structured result. The orchestrator receives only what it needs.
+## Runtime-neutral orchestration
 
-**Impact:** According to Anthropic research, multi-agent systems with Claude Opus orchestrator and Claude Sonnet subagents outperform single-agent Claude Opus by 90.2% on research tasks.
+Use the subagent mechanism available in the current runtime. Describe the role and required
+result without assuming a particular Team, Task, transcript, or transport API.
 
-## Orchestration Rules
+Nested delegation is allowed when the runtime supports it and the subtask genuinely benefits
+from another isolated context. The delegating agent remains responsible for its own bounded
+result. If nested delegation is unavailable or unnecessary, it returns the need to the
+orchestrator instead.
 
-Subagents cannot call other subagents — Claude Code supports only one level of orchestration. Nested calls fail silently:
+Agents inherit the orchestrator's model. Do not set a different model in callers; agent
+definitions use `model: inherit` where the runtime supports that field.
 
-```
-Orchestrator (main skill)
-    ├── code-reviewer (subagent) ✓
-    ├── security-auditor (subagent) ✓
-    └── test-reviewer (subagent) ✓
+## When to delegate
 
-code-reviewer
-    └── another-agent ✗ FORBIDDEN
-```
+| Task type | Why isolation helps | Example |
+|---|---|---|
+| Review | Fresh context reduces anchoring on the implementation | Code or security review |
+| Research | Extensive file reading stays outside the main context | Codebase exploration |
+| Debugging | A focused trace keeps logs and hypotheses bounded | Root-cause analysis |
+| Validation | A clean context can simulate or verify independently | Schema or skill review |
+| Parallel work | Independent questions can run concurrently | Researching separate modules |
+| High-volume work | Large logs and test output stay isolated | Test-suite analysis |
 
-If subagent needs more work → return to orchestrator → orchestrator launches another subagent.
+Delegate a concrete, bounded task. Keep decisions that combine findings, user scope, and the
+overall solution with the orchestrator.
 
-## When to Use Subagents
+## Inline and dedicated agents
 
-| Task Type | Why Subagent Helps | Example |
-|-----------|-------------------|---------|
-| Reviews | Fresh context for objective assessment | code-reviewer, security-auditor |
-| Research | Extensive file reading stays isolated | Exploring codebase, reading docs |
-| Debugging | Isolated diagnosis without polluting main context | Error analysis, root cause |
-| Validation | Schema/format checking with clean slate | skill-checker, schema-validator |
-| Parallel work | Multiple independent directions | Research 3 modules simultaneously |
-| High-volume output | Tests, logs don't bloat main context | Running test suite, log analysis |
+Use an inline subagent for a short, one-off task whose prompt can state the scope and result
+directly. Use the runtime's suitable exploration, analysis, or execution role; role names differ
+between runtimes.
 
-## Inline Agents (Ad-hoc Tasks)
+Create a dedicated Skill + Agent pair for a reusable task with substantial methodology:
 
-For simple, one-off tasks — use Task tool with built-in subagent types:
+1. The skill contains the domain methodology and remains usable without an agent.
+2. The agent preloads that skill, receives a bounded input, and defines the result contract.
 
-```markdown
-Use Explore subagent to find all files related to authentication
-Use general-purpose subagent to analyze the error and suggest fixes
-Use Plan subagent to design implementation approach for {feature}
-```
+This keeps methodology in one source while giving repeated reviews fresh context.
 
-The orchestrator calls Task tool with arbitrary prompt and `subagent_type`. No agent file needed.
+### Responsibility split for reviewers
 
-**Built-in subagent types:**
-- `Explore` — fast codebase exploration, file search, pattern matching
-- `general-purpose` — flexible tasks, research, analysis
-- `Plan` — designing implementation approaches
+- The skill owns reusable domain criteria, checklists, decision rules, and defect examples.
+- The reviewer agent owns the fresh skeptical stance, bounded input, evidence to read,
+  reviewer-specific investigation, direct JSON response, and the freedom to challenge the chosen
+  approach or describe a useful alternative within its lane. It does not edit or make the release
+  decision.
+- The caller owns supplying complete context and explaining the review to the user. It applies no
+  reviewer finding until the user explicitly approves the specific change.
 
-**When to use:**
-- Simple research/exploration
-- One-off file operations
-- Tasks under 50 lines of instructions
-- No reuse needed
+Do not repeat the preloaded skill's reusable domain rules in the agent. When a necessary reusable
+rule exists only in an agent, move it into the preloaded skill before removing the agent copy;
+this preserves behavior while restoring one canonical owner. Mechanics used only to investigate
+the reviewer agent's bounded lane may remain in that agent.
 
-## Dedicated Agents (Skill + Agent Pattern)
+## Agent file format
 
-For complex, reusable tasks — create **Skill + Agent pair**:
-
-1. **Skill** — holds methodology (WHAT to do, HOW to analyze)
-   - Usable inline via `/skill-name`
-   - Contains knowledge
-
-2. **Agent** — adds isolation + output contract
-   - Uses `skills:` to preload methodology
-   - Defines output: JSON, file changes, or actions
-   - Runs in isolated context
-
-**Example:**
-
-```yaml
-# skills/code-reviewing/SKILL.md — methodology
----
-name: code-reviewing
-description: Code review methodology and quality standards.
----
-## What to Check
-- Architecture, error handling, edge cases...
-
-## Severity Levels
-- Critical, Major, Minor...
-```
-
-```yaml
-# agents/code-reviewer.md — isolation + format
----
-name: code-reviewer
-description: Review code quality after implementation.
-color: blue
-skills:
-  - code-reviewing    # Full SKILL.md content loaded
-allowed-tools: Read, Glob, Grep
----
-Follow code-reviewing methodology.
-
-## Output
-{ "findings": [...], "summary": {...} }
-```
-
-**Benefits:**
-- Methodology usable inline (`/code-reviewing`) OR in isolation (via agent)
-- Multiple agents can run in parallel
-- No methodology duplication — skill is single source of truth
-- Agent adds structure (output contract) without bloating skill
-
-## Agent File Format
-
-Agent files use YAML frontmatter + Markdown body. Store in `~/.claude/agents/{name}.md`.
+Store source definitions in `~/.claude/agents/{name}.md`. Generated runtimes may adapt the
+frontmatter and tool names during synchronization.
 
 ```yaml
 ---
 name: agent-name
 description: |
-  When Claude should delegate to this agent. Include:
-  - Purpose and capabilities
-  - Example triggers
-  - What NOT to use it for
+  Explains the bounded purpose, when to delegate, and important exclusions.
+model: inherit
 color: blue
 skills:
   - methodology-skill
 allowed-tools: Read, Glob, Grep
 ---
 
-# Agent Instructions
-
 ## Input
-[What the agent receives from the orchestrator]
+
+State the paths, requirements, scope, and evidence the orchestrator supplies.
 
 ## Process
-[Step-by-step methodology — or reference preloaded skill]
+
+Apply the preloaded methodology to the complete relevant artifact and its contracts.
 
 ## Output
-[Output contract: JSON schema, file changes, or actions]
+
+Return the role's structured result directly to the orchestrator.
 ```
 
-### Required Fields
+Required frontmatter fields are `name`, `description`, `color`, and `skills` when methodology is
+preloaded. Use only the tools needed for the task. Analysis agents normally need read/search
+tools; add shell access only for relevant read-only checks. Do not grant write access to a
+reviewer merely to persist its report.
 
-| Field | Description |
-|-------|-------------|
-| `name` | Unique identifier (kebab-case) |
-| `description` | When/why to use — Claude reads this to decide delegation |
-| `color` | Badge color for visual identification (see below) |
-| `skills` | Skill(s) to preload — agent must have methodology from skill |
+## Reviewer contract
 
-### Color Recommendations
+A reviewer, validator, checker, scanner, or critic reviews the supplied artifact within its
+defined lane. It does not modify the artifact or decide whether the result may ship.
 
-All agents must have a color for visual identification. Valid values: `red`, `blue`, `green`, `yellow`, `purple`, `orange`, `pink`, `cyan`.
+### Stance and scope
 
-| Color | Agent Type |
-|-------|------------|
-| blue/cyan | Analysis, review (code-reviewer, test-reviewer) |
-| red | Security, critical (security-auditor) |
-| yellow | Validation, caution (skill-checker, schema-validator) |
-| green | Success-oriented, exploration (Explore) |
-| purple/pink | Creative, generation, research |
-| orange | Infrastructure, deployment |
+The reviewer starts from fresh context, reads the complete artifact, and follows relevant
+callers, dependencies, standards, and contracts. Apply the preloaded lane rather than a generic
+preference. The reviewer may report defects, unnecessary complexity, a simpler approach, a
+different design, an improvement, or an additional scenario when relevant to that lane. Explain
+what was observed and why it matters; unsupported preference is not useful. Accuracy matters more
+than finding count, and a clean result is complete.
 
-### Optional Fields
+The orchestrator also supplies a short implementation explanation when reviewing completed work:
+what changed, how the result works, why this approach was chosen, deliberate limits, and
+assumptions. Treat this explanation as a claim to verify against the request, project evidence, and
+artifact, not as authority. For a review of existing material, use the review goal and known usage
+instead of inventing an implementation rationale.
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `model` | `inherit` | Always use `inherit` to match orchestrator's model |
-| `allowed-tools` | All tools | Restrict to necessary tools (e.g., `Read, Glob, Grep`) |
-| `permissionMode` | `default` | Permission handling: `default`, `acceptEdits`, `bypassPermissions`, `plan` |
-| `hooks` | None | Lifecycle hooks for validation |
+A finding gives the caller enough context to explain the relevant behavior, what is wrong or
+proposed, when it matters, and the consequence.
 
-## Output Contracts
+### Required JSON shape
 
-Agents always return JSON report — even if they modify files or execute commands. Work is the process, output is the report.
+Return the JSON directly as the subagent result. Every shown top-level key is required:
 
-**Analysis agents** — findings and recommendations:
 ```json
 {
-  "status": "approved" | "changes_required",
-  "findings": [...],
-  "summary": "..."
+  "status": "findings_present",
+  "findings": [
+    {
+      "location": "string",
+      "finding": "what the reviewer found or proposes",
+      "reasoning": "why it matters within this review lane",
+      "alternative": "optional simpler or stronger approach, or null"
+    }
+  ],
+  "clean_check": null,
+  "summary": "string"
 }
 ```
 
-**Executor agents** — report of changes made:
+`status` is exactly `clean` or `findings_present`. With `clean`, `findings` is empty and
+`clean_check` briefly states what was checked. With `findings_present`, `findings` is non-empty and
+`clean_check` is `null`. Domain agents may add evidence, conditions, impact, severity, category, or
+other useful fields. Order findings by importance.
+
+### Reviewer skeleton
+
+```markdown
+You are a fresh skeptical {lane} reviewer. Review the complete supplied {artifact} and relevant
+context within that lane. You may challenge correctness, complexity, the chosen approach, or
+missing possibilities and describe a useful alternative. Explain what you found and why it matters;
+do not edit or decide whether the result ships. Treat the implementer's explanation as a claim to
+verify, not as authority. Return the common reviewer JSON directly. A clean result is valid.
+```
+
+## Other agent contracts
+
+Executor and automation agents are not reviewers and use role-specific results. Keep their
+contracts separate from the reviewer contract.
+
+An executor reports changed artifacts and incomplete work:
+
 ```json
 {
-  "status": "success" | "partial" | "failed",
-  "files_modified": ["path/to/file.ts", ...],
-  "files_created": ["path/to/new.ts", ...],
-  "summary": "Created 2 files, modified 3 files"
+  "status": "success",
+  "files_modified": ["path/to/file.ts"],
+  "files_created": [],
+  "summary": "Implemented the bounded task."
 }
 ```
 
-**Automation agents** — report of actions taken:
+An automation agent reports actions and observable results:
+
 ```json
 {
-  "status": "success" | "failed",
-  "actions": ["ran tests", "deployed to staging"],
-  "results": {...},
+  "status": "success",
+  "actions": ["ran tests"],
+  "results": {},
   "errors": []
 }
 ```
 
-## Resuming Agents
+## Orchestrator responsibilities
 
-After agent completes, orchestrator receives `agentId`. Use it to continue work with same context:
+The orchestrator launches a fresh reviewer instance with the touched artifacts, deleted or
+renamed-file evidence, generated or mechanical evidence, relevant requirements, related contracts
+or callers, validation evidence, and the short implementation explanation described above. Select
+the complete reviewer set required by the active skills and launch it in parallel against one
+artifact revision.
 
-```
-Resume agent {agentId} to ask follow-up question about findings
-```
+After reviewers return, apply no finding and do not repeat the review automatically. Explain what
+you changed and how it works, then what reviewers found, what it can cause, whether you agree and
+why, and what you recommend. Group related points, avoid internal process terms, and wait for the
+user's approval before editing.
 
-**When to resume:**
-- Need clarification on agent's findings
-- Iterative refinement (agent found X, now do Y based on X)
+One review wave applies to one review stage. Preserve distinct stages that examine different
+artifacts or boundaries, such as a source scan followed by a destination scan. The orchestrator may
+still correct problems it finds through implementation, direct checks, or diff inspection before
+review begins.
 
-**When NOT to resume (start fresh):**
-- Different task, unrelated to previous
-- Context would confuse agent
-- Previous work is complete, new work begins
+If a durable log is needed, the orchestrator stores the returned JSON. The reviewer does not need
+a report path or write permission.
 
-## Writing Effective Descriptions
+## Invoking agents from skills
 
-The `description` field is critical — Claude uses it to decide when to delegate. Include:
-
-1. **Purpose** — what the agent does
-2. **Triggers** — when to use (with examples)
-3. **Exclusions** — what NOT to use it for
-
-Example from `code-reviewer`:
-```yaml
-description: |
-  Use this agent when code has been written or modified and needs quality assessment.
-
-  **Examples of when to use:**
-  - After implementing a feature
-  - After refactoring code
-  - Before committing changes
-
-  **Proactive usage**: Invoke automatically after any code implementation task.
-```
-
-## Invoking from Skills
-
-Reference agents by name in skill workflow:
+Reference a dedicated agent by its role and provide complete input without prescribing a
+runtime-specific transport:
 
 ```markdown
-## Post-work
+Run a fresh `code-reviewer` with:
+- touched, deleted, renamed, generated, and mechanical artifacts;
+- the user request or user-spec;
+- applicable repository instructions and project contracts;
+- relevant callers, dependencies, and validation evidence;
+- a short explanation of what changed, how the result works, why this approach was chosen,
+  deliberate limits, and assumptions.
 
-1. **Run Reviews** (launch in parallel)
-   - `code-reviewer` — quality, architecture, patterns
-   - `security-auditor` — OWASP Top 10, vulnerabilities
-
-2. **Process Findings**
-   Evaluate each finding on merit — severity is metadata, not a filter.
-   - Valid, improves result → apply (any severity)
-   - Disagree or uncertain → discuss with user
-   Log each finding with action taken.
+After the reviewer returns, do not edit. Explain what you changed and how it works, then what the
+reviewer found, what it can cause, whether you agree and why, and what you recommend. Wait for the
+user's approval.
 ```
 
-For agents needing specific input:
-
-```markdown
-Use `code-reviewer` subagent with:
-- files: {list of modified files}
-- userspec: {user requirements document}
-- techspec: {technical specifications}
-```
-
-## Best Practices
-
-1. **Define clear output contract** — JSON for analysis, file changes for executors
-2. **Restrict tools** — Most agents only need `Read, Glob, Grep`
-3. **Use `model: inherit`** — Ensures maximum quality from orchestrator's model
-4. **Always preload skill** — Agent must have methodology, not just output format
-5. **Include examples in description** — Helps Claude know when to invoke
-6. **One level of orchestration** — Subagents cannot call other subagents
-
-## Example Agents
-
-See existing agents for full examples:
-- `~/.claude/agents/code-reviewer.md` — Detailed methodology with review dimensions
-- `~/.claude/agents/security-auditor.md` — OWASP-based security analysis
-- `~/.claude/agents/skill-checker.md` — Skill validation against standards
-
-## References
-
-- [Create custom subagents - Claude Code Docs](https://code.claude.com/docs/en/sub-agents)
-- [Multi-agent research system - Anthropic](https://www.anthropic.com/engineering/multi-agent-research-system)
+Dedicated agent descriptions should state purpose, trigger, and exclusions concretely. Keep
+large domain prompts in the preloaded skill rather than duplicating them in every caller.

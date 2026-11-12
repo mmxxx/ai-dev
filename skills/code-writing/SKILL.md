@@ -1,139 +1,81 @@
 ---
 name: code-writing
 description: |
-  Universal quality coding process: plan, TDD, reviews.
-  Use whenever code needs to be written — ad-hoc or as part of a task.
-
-  Use when: "напиши код", "закодь", "реализуй", "write code", "implement"
-
-  For planning tasks → tech-spec-planning skill. For specs → user-spec-planning skill.
+  Guides implementing code changes: proportional context reading, approval before non-trivial
+  unplanned work, focused changes, the smallest sufficient checks, and fresh reviews. Use whenever
+  code is written or changed, from a one-line fix to an approved user-spec, including code edits
+  made as one step of a larger task.
+  Pure visual layout uses layout-writing (mixed layout and logic uses both); editing or rendering
+  video with Remotion uses the video and Remotion skills; agreeing requirements before coding uses
+  user-spec-planning.
 ---
 
 # Code Writing
 
-## Phase 1: Preparation
+## Understand the Change
 
-1. **Parse Requirements**
-   - Extract what needs to be built from user message or passed acceptance criteria
-   - Clarify ambiguities — ask user if unclear
-   - Formulate acceptance criteria (what "done" looks like)
+1. Extract the requested behavior and what done means from the request or user-spec. Resolve
+   ambiguity from repository evidence; ask only when a substantive choice changes the result or
+   scope.
+2. Read repository instructions, affected code, its usages, and only the project documentation
+   needed to change it safely. A localized edit needs local context; cross-cutting work needs its
+   contracts, architecture, and relevant patterns.
+3. For non-trivial work, read every source file that will change, find affected contracts and
+   reusable code, and establish the smallest useful baseline check. Inspect generated, lock,
+   snapshot, or other mechanical artifacts through their generator, relevant diff, and
+   deterministic validation rather than an unhelpful full read.
+4. Before editing non-trivial work not covered by an approved user-spec or user-approved plan,
+   briefly explain in simple user-facing language how the result will work end to end and why this
+   is the simplest sufficient approach, then wait for approval.
+5. Treat a new idea, risk, edge case, or opportunity discovered during implementation or review
+   as a proposal, not authorization. A rare or unagreed scenario is a user decision even when its
+   correction looks local. Correct autonomously only an authorized local defect in agreed normal
+   behavior; ask before adding behavior, state, entities, contracts, dependencies, architecture,
+   or material complexity.
 
-2. **Read Project Context (Graceful)**
+## Implement and Verify
 
-   **Working on a task?** Read all files listed in the task's "Context" section — it already specifies everything needed.
+1. Implement only the requested behavior. Reuse existing capabilities before adding abstractions
+   or dependencies. Do not add speculative validation, fallbacks, configuration, optimization,
+   or future flexibility without a current requirement or realistic project condition.
+2. Validate untrusted input at its boundary, keep secrets out of source, preserve useful error
+   information, and handle failures where the program can recover or add context.
+3. Let straightforward code explain itself. Comment only when code cannot communicate the reason
+   for a business rule, safety invariant, external constraint, compatibility workaround,
+   deliberate tradeoff, or required ordering.
+4. Apply `test-master` only to deterministic executable behavior or another explicit deterministic
+   contract. For LLM-produced results, presentation-only layout, or freely editable copy, use agent,
+   manual, or visual verification instead. If there is no test subject, do not create artificial
+   assertions.
+5. Run the smallest supported lint, format, type, build, render, and user-requested checks that
+   cover the change. Use a project-wide command only when it is the available entrypoint or the
+   change is cross-cutting. Separate unrelated baseline failures from regressions.
 
-   **Standalone (no task file)?** Read (skip if missing):
-   - `.claude/skills/project-knowledge/references/project.md` — project overview
-   - `.claude/skills/project-knowledge/references/architecture.md` — system structure
-   - `.claude/skills/project-knowledge/references/patterns.md` — project conventions
+## Run Fresh Reviews
 
-   Then read `.claude/skills/project-knowledge/SKILL.md` (if exists).
-   Consider which domain-specific guides are relevant to your task and read those
-   (e.g., `architecture.md` Data Model section for DB work, `ux-guidelines.md` for UI tasks).
+After every completed implementation, launch one fresh review stage with the complete applicable
+reviewer set in parallel against the same revision. Include reviewers required by other active
+skills in that stage instead of starting a separate review sequence.
 
-   **No project patterns?** Apply baseline from [universal-patterns.md](references/universal-patterns.md) — naming, error handling, structure.
+Include a fresh `code-reviewer` without a model override. Its review scope matches the change: a
+localized edit gets focused connected context; a broad change gets all affected contracts and
+architecture.
 
-3. **Analyze & Review Approach**
+Also launch in parallel when applicable:
 
-   Before coding, output your findings:
-   - Grep for usages of code to be modified
-   - Read all files that will be changed
-   - Verify solution follows project patterns (or universal patterns)
-   - Identify existing code that can be reused
-   - If modifying existing code, run existing tests for the area to establish baseline
+- `security-auditor` when a security boundary changed or the user requested a security review.
 
-   If concerns → discuss with user before proceeding.
+`test-master` owns the additional `test-reviewer` invocation when meaningful test code changed.
+Include that reviewer in the same review stage.
 
-**Checkpoint:** List completed preparation steps before moving to implementation.
+Give each reviewer the user request or user-spec, applicable repository instructions, validation
+evidence, every touched source file with relevant callers and dependencies, deleted or renamed
+file evidence, generator/diff/validation evidence for mechanical artifacts, and a short explanation
+of what changed, how the result works, why this approach was chosen, deliberate limits, and
+assumptions. The reviewer verifies that explanation against the request, project evidence, and code
+rather than accepting it as fact.
 
-## Phase 2: Implementation (TDD)
-
-1. **Write Tests First**
-
-   **Before writing tests**, read [testing-guide.md](references/testing-guide.md) — when to write which test type, test structure.
-
-   - Write tests for: business logic, validations, transforms, error handling. Skip trivial code without logic (simple getters, one-liners, configs)
-   - Write tests for requirements and edge cases
-   - Tests should fail initially (no implementation yet)
-   - One test = one scenario, test behavior not implementation
-   - If mocking >3 dependencies → wrong test type, use integration test
-
-2. **Write Code**
-   - Implement to pass tests
-   - Follow project patterns (from Phase 1) or apply baseline from [universal-patterns.md](references/universal-patterns.md)
-   - Use env vars for secrets, validate inputs at boundaries
-   - Handle edge cases, comment WHY not WHAT
-
-3. **Run Tests**
-   - All new tests pass
-   - Fix any failures
-
-**Checkpoint:** List implemented functionality and test results.
-
-## Phase 3: Post-work
-
-1. **Run Lint/Format**
-   - Run project's linter and formatter before reviews
-
-2. **Run Relevant Tests**
-   - Tests for files changed
-   - Tests mentioned in task (if applicable)
-   - Save full test suite for end of feature
-
-3. **Smoke Verification** (if task has Verification Steps → Smoke or User)
-
-   Execute each command from the Smoke section. Record results in decisions.md Verification section.
-   If a check fails — fix the code before proceeding to reviews.
-   If the task has User checks — ask the user to verify, wait for confirmation.
-
-   Smoke catches integration bugs that mocked tests miss:
-   real API responses, library initialization, config validity.
-
-4. **Run Reviews** (launch in parallel)
-
-   **Reviewer selection:**
-   - Working on a task file → run reviewers from the task's "Reviewers" section
-   - Standalone (no task file) → default: code-reviewer, security-auditor, test-reviewer
-
-   For each reviewer:
-   1. Spawn subagent via Task tool (subagent_type = reviewer name, e.g. `code-reviewer`)
-   2. Pass: git diff of changes, path to task file, path to tech-spec, path to user-spec
-   3. Reviewer loads its own skill automatically (via agent frontmatter `skills:`)
-   4. Report path: from the task's "Reviewers" section (or `logs/working/` if standalone)
-
-   Reviewers write JSON reports to `logs/working/task-{N}/{reviewer-name}-{round}.json`.
-   `{N}` = task number from task file; `"standalone"` if no task file.
-   On re-review: new file with incremented round number, old file stays.
-
-5. **Process Findings**
-
-   Evaluate each finding on merit — severity is metadata, not a filter.
-   A valid minor fix still improves quality. Reason: skipping valid findings
-   silently degrades the codebase over time.
-
-   For each finding:
-   - **Valid, improves code** → apply (any severity: critical, major, minor, low)
-   - **Disagree or uncertain** → discuss with user (explain reasoning)
-   - **Out of scope** → skip, note in findings log
-
-   Produce a findings log:
-   | # | Source | Severity | Finding | Action | Reason |
-   Each finding appears in this table — transparent decision trail.
-
-   After applying fixes → re-run tests → re-run the reviewer(s) that reported them.
-   Limit: 3 review iterations. If findings remain after round 3 → ask user.
-   Reason: fixes can introduce new issues — a second pass catches regressions.
-
-**Checkpoint:** List post-work steps completed.
-
-## Self-Verification
-
-Verify each item before marking complete. If any item fails, return to the relevant phase.
-
-- [ ] All phases completed (Preparation, Implementation, Post-work)
-- [ ] Tests pass
-- [ ] Smoke verification executed (if task had Smoke/User checks)
-- [ ] Each reviewer finding evaluated and logged
-- [ ] Findings log table produced
-- [ ] Review JSON reports saved to `logs/working/task-{N}/`
-
+After reviewers return, apply no finding and do not repeat the review automatically. Explain what
+you implemented and how it works, then what reviewers found, what it can cause, whether you agree
+and why, and what you recommend. Group related points, avoid internal process terms, and wait for
+the user's approval before editing.

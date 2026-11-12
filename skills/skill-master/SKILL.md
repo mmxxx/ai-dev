@@ -1,63 +1,71 @@
 ---
 name: skill-master
 description: |
-  Guide for creating/updating skills with specialized knowledge and workflows.
-
-  Use when: "создай скилл", "измени скилл", "гайд по скиллам", "обнови скилл", "улучши скилл",
-  "create skill", "update skill", "skill guide", "new skill", "how to write a skill"
+  Guides creating, editing, and reviewing skills in ~/.claude and project .claude/ for Claude
+  Code and Codex: local form and routing standards, references, scripts, skill reviewers, and
+  the required Claude-to-Codex sync after edits. Use whenever a skill is being changed or
+  evaluated, including proposing a change, diagnosing why a skill did not trigger, and fixing
+  its description or rules. Use instead of the generic skill-creator for these skills.
 ---
 
 # Skill Creator
 
-## Claude-to-Codex Autosync
+## Manual Claude-to-Codex Sync
 
-Global methodology source of truth is Claude-side: `~/.claude/**`.
-Codex-side `~/.codex/**` is generated runtime.
-
-When changing global methodology files under `~/.claude/skills/**`, `~/.claude/agents/**`, `~/.claude/commands/**`, or `~/.claude/shared/**`, immediately run:
-
-```bash
-~/.claude/scripts/sync-to-codex.sh --apply
-```
-
-If sync reports a conflict or validation error, stop and report it. Include generated `~/.codex/**` changes in the same commit as the `~/.claude/**` source change.
-
-When changing project-local `.claude/**` files inside a project, run project sync instead:
-
-Project source of truth is Claude-side: `CLAUDE.md` and `.claude/**`.
-Codex-side `AGENTS.md` and `.codex/**` is generated runtime.
-
-```bash
-~/.claude/scripts/sync-to-codex.sh --project "$PWD" --apply
-```
-
-**Built into framework skills — add it to your own.** Every skill in this framework that edits `.claude/**` already carries an autosync step: it writes the Claude-side source first, then regenerates the Codex runtime (and the `~/.claude` pre-commit hook runs the sync automatically when methodology files are staged). When you author your OWN skill that creates or edits `~/.claude/**` or project `.claude/**` files, paste this block near the top of its `SKILL.md` so your changes reach Codex too:
-
-````markdown
-## Autosync to Codex
-
-This skill edits Claude-side source of truth (`~/.claude/**` for global skills, or a project's `.claude/**`). Codex-side `~/.codex/**` / `AGENTS.md` is generated runtime. After editing those files, regenerate Codex:
+Claude-side is the source of truth for the converter's allowlist: global `CLAUDE.md`, `skills/**`,
+`agents/*.md`, and `commands/*.md`; or project `CLAUDE.md`, `.claude/skills/**`,
+`.claude/agents/*.md`, and `.claude/commands/*.md`. Codex-side outputs are generated runtime. No
+scheduled job performs this conversion. After editing an allowlisted source, the editing agent runs
+the matching command immediately and reviews the generated result:
 
 ```bash
 ~/.claude/scripts/sync-to-codex.sh --apply                   # global ~/.claude/**
 ~/.claude/scripts/sync-to-codex.sh --project "$PWD" --apply  # project .claude/**
 ```
 
-Commit the generated `.codex/**` / `AGENTS.md` changes together with the source. If sync reports a conflict, stop and report it.
-````
+Do not edit generated Codex files directly. If one was changed, move the intended content to its
+Claude source, discard the direct generated edit, and run the matching command above to regenerate
+Codex.
 
-If a skill never touches `.claude/**` (pure analysis, code-writing in a project's own source tree), it does not need an autosync block.
+Git hooks are fallback checks: pre-commit repeats project sync, rejects partial staging, and stages
+generated outputs; pre-push blocks remaining drift. For a project, commit generated
+`.agents/skills/**`, `.codex/**`, and `AGENTS.md` changes with their Claude sources, except
+host-local `.codex/.sync/**`. For global changes, commit and push generated outputs in the
+separate `~/.codex` repository before pushing `~/.claude`; global pre-push enforces that ordering.
+
+If sync reports a conflict or validation error, stop and report it. When an approved deletion or
+rename produces an orphan, inspect every reported target and, only when all targets correspond to
+the approved source change, run the matching reviewed prune command:
+
+```bash
+~/.claude/scripts/sync-to-codex.sh --apply --prune --confirm-delete
+~/.claude/scripts/sync-to-codex.sh --project "$PWD" --apply --prune --confirm-delete
+```
+
+Stop instead if the orphan list contains anything else.
+
+**Bundled resources and the sync:** Markdown files (`SKILL.md`, `references/*.md`) are text-adapted
+during sync (Claude tool names to Codex equivalents). Every other bundled file—`scripts/`,
+`assets/`, images, and data—is copied byte-for-byte. Bundled executables must therefore remain
+runtime-neutral: do not hardcode `.claude` paths or Claude-only tool names, resolve resources
+relative to their own package, and keep runtime-specific instructions in Markdown that the
+converter adapts.
 
 ## About Skills
 
-Skills are modular, self-contained packages that extend Claude's capabilities by providing specialized knowledge, workflows, and tools. Think of them as "onboarding guides" for specific domains or tasks—they transform Claude from a general-purpose agent into a specialized agent equipped with procedural knowledge that no model can fully possess.
+Skills give the agent domain knowledge it does not have or a specific way of working needed by
+the user.
 
-### What Skills Provide
+Assume the agent can use ordinary tools, understand the current conversation, notice command
+failures, and handle routine recoverable errors. Add an instruction only when the task, an
+established contract, or a security, authorization, data-loss, or irreversible-action boundary
+requires it. Do not add required actions, checks, state, or branches for behavior the agent can
+already handle, and do not re-check immediately visible results.
 
-1. Specialized workflows - Multi-step procedures for specific domains
-2. Tool integrations - Instructions for working with specific file formats or APIs
-3. Domain expertise - Company-specific knowledge, schemas, business logic
-4. Bundled resources - Scripts, references, and assets for complex and repetitive tasks
+Correct a local defect only when it restores agreed normal behavior. Treat a rare or unagreed
+scenario, or a correction that adds behavior, state, entities, contracts, dependencies,
+architecture, or material complexity, as a user decision; after the decision, encode the chosen
+behavior or omit special handling.
 
 ## Skill Types
 
@@ -65,35 +73,31 @@ There are two types of skills based on how they guide Claude's work.
 
 ### Procedural Skills
 
-Use when the task requires a strict sequence of steps where order matters. Phase 2 depends on Phase 1 completing correctly. Skipping or reordering steps would break the workflow.
-
-Examples: code-writing (Plan → TDD → Review), project-planning (Interview → Features → Roadmap), tech-spec-planning.
-
-These skills have explicit phases with checkpoints after each phase to verify completion before proceeding.
+Use when the skill defines a way of working or a sequence of actions. Describe it in the form and
+detail the task requires. Phases, checkpoints, and explicit state are tools for real dependencies,
+not required features of a procedural skill.
 
 **Creating a procedural skill?** Read [procedural-skills.md](references/procedural-skills.md) — phase structure, checkpoints, verification patterns.
 
 ### Informational Skills
 
-Use when providing methodology, knowledge, or guidelines without a strict execution order. The agent reads relevant sections and applies them to the situation. There's no "Phase 1 must complete before Phase 2" — sections are independent.
-
-Examples: security-auditor (what to check), testing (when to use which test type), company-info (domain knowledge), database-schemas.
-
-These skills organize content into logical sections with decision frameworks (YES if / NO if) to help the agent choose what applies.
+Use when providing methodology, knowledge, or guidelines without a required execution order.
+Organize content by topic. Add decision guidance only where the task contains a real choice.
 
 **Creating an informational skill?** Read [informational-skills.md](references/informational-skills.md) — section organization, knowledge structure.
 
 ## 1. Discovery
 
-For new skills or major changes — run discovery interview:
-- What problem does the skill solve?
-- What phrases should trigger it?
-- What should the skill NOT do?
-- Concrete usage examples
+For a new skill or major change, reuse the request and project facts to establish purpose, routing,
+scope, and required output. If a material design decision remains unresolved, run the adaptive
+interview from [interview-guide.md](references/interview-guide.md) — question admission, stopping
+rule, and handling decisions the user cannot answer. Otherwise proceed without an interview.
 
-**When running user interview**, read [interview-guide.md](references/interview-guide.md) — process overview, example questions for each phase, handling "I don't know" answers.
-
-**Checkpoint:** Requirements gathered. Problem, triggers, scope, and examples documented.
+Before creating or materially changing a skill without an approved user-spec or user-approved
+plan, briefly explain in simple user-facing language how the skill will behave from activation to
+result, including any user checkpoints, and why this is the simplest sufficient design; then wait
+for approval. Show the user the exact text of every skill change, however small, and edit only
+after approval.
 
 ## 2. Skill Structure
 
@@ -119,69 +123,62 @@ skill-name/
 **`name`** (required):
 - kebab-case (lowercase, hyphens)
 - ≤64 characters
-- Unique identifier
+- Exactly matches the skill directory name
+- Unique identifier; must not contain "anthropic" or "claude"
 
 **`description`** (required):
 - Third person ("Analyzes code...", NOT "I analyze...")
 - Include both WHAT the skill does AND WHEN to use it
-- ≤1024 characters
+- ≤1024 characters, no XML tags
 
-#### Description Best Practices
+#### Writing the Description
 
-Claude uses description to decide when to auto-invoke the skill. Be specific and include key terms.
+The agent sees only descriptions before loading a skill, matches them by meaning, and consults a
+skill only when it believes it cannot handle the task well alone. Skills therefore tend to
+under-trigger, especially when the need is one step of a larger task or looks simple.
+
+- Put the key use case and terms first: Claude Code truncates long descriptions in the skill
+  listing, and Codex shortens descriptions first when all skills exceed its shared budget.
+- Describe WHEN as situations and topics, not as an inventory of user phrases; a few example
+  requests are fine when they clarify the domain.
+- Name what the agent lacks without the skill (data locations, conventions, a required
+  workflow) and cover non-obvious cases with "including…": the skill as one step of another
+  task, or a request that does not name the domain directly.
 
 **Template:**
 ```yaml
 description: |
-  [What the skill does — be specific, include key terms]
-
-  Use when: [trigger conditions — specific phrases users say]
+  [What the skill does and what it knows that the agent does not; key terms first.]
+  Use whenever [situations and topics], including [non-obvious cases].
 ```
-
-**Rules:**
-1. **Be specific** — Include key terms that match user requests
-2. **List trigger phrases** — Real phrases users actually say (5-10 phrases)
-3. **Include variations** — "tech-spec" AND "write a spec" (different ways to say same thing); include the user's own language alongside English
 
 **Bad:**
 ```yaml
-description: This skill helps with documents. Use when user wants to work with docs.
-```
-Why bad: Vague phrases ("work with docs"), no specific triggers.
+description: |
+  Helps with reports.
 
+  Use when: "сделай отчёт", "создай отчёт", "сгенерируй отчёт", "подготовь отчёт"
+```
 **Good:**
 ```yaml
 description: |
-  Manage .claude/skills/project-knowledge/ docs: create, check, update.
-
-  Use when: "заполни документацию", "создай документацию", "проверь документацию", "обнови документацию"
+  Extracts text and tables from PDF files, fills forms, and merges documents. Use when working
+  with PDF files or when the user mentions PDFs, forms, or document extraction.
 ```
-Why good: Specific actions, concrete trigger phrases.
+#### Negative Triggers
 
-**How to gather trigger phrases:**
-1. Think: "What would I actually say to invoke this skill?"
-2. Ask: "How would different users phrase this request?"
-3. Include: Common typos, informal variants, English plus the user's own language if applicable
+Add an explicit "do not use for" line only when the skill genuinely overlaps a neighboring skill or has a plausible near-miss. Negative routing should resolve a real ambiguity, not pad the description.
 
-#### Undertriggering Problem
-
-Claude tends to undertrigger skills — not use them when they'd be useful. To combat this, make descriptions slightly "pushy": explicitly list contexts and keywords that should activate the skill, even non-obvious ones.
-
-**Instead of:**
-```yaml
-description: How to build a dashboard to display data.
-```
-
-**Write:**
 ```yaml
 description: |
-  How to build a dashboard to display data. Use this skill whenever
-  the user mentions dashboards, data visualization, internal metrics,
-  or wants to display any kind of data, even if they don't explicitly
-  ask for a "dashboard".
+  Analyzes SQL query performance and suggests index changes. Use when a query is slow or may
+  need an index.
+  Do NOT use for: writing new queries from scratch, schema design, data migrations.
 ```
 
-**Need argument-hint, disable-model-invocation, or model override?** Read [frontmatter-options.md](references/frontmatter-options.md) — optional fields and when to use each.
+**Need invocation control, tool permissions, path scoping, forked execution, or a model or
+effort override?** Read [frontmatter-options.md](references/frontmatter-options.md) — optional
+fields, their Claude Code effect, and why routing stays in `description`.
 
 ### Body
 
@@ -192,38 +189,27 @@ Every SKILL.md body consists of:
 
 **When defining output format**, read [output-patterns.md](references/output-patterns.md) — template pattern, examples pattern.
 
-**Checkpoint:** SKILL.md created with frontmatter, body, and references. Skill structure complete.
-
 ### Bundled Resources
 
 A skill contains only SKILL.md and these three optional directories — nothing else (no README, CHANGELOG, etc.).
 
 #### Scripts (`scripts/`)
 
-Executable code (Python/Bash/etc.) for tasks that require deterministic reliability or are repeatedly rewritten.
+Executable code (Python/Bash/etc.) for **deterministic mechanical work** — the kind of thing a model should not be redoing by hand each run.
 
-- **When to include**: When the same code is being rewritten repeatedly or deterministic reliability is needed
-- **Example**: `scripts/rotate_pdf.py` for PDF rotation tasks
-- **Benefits**: Token efficient, deterministic, may be executed without loading into context
-- **Note**: Scripts may still need to be read by Claude for patching or environment-specific adjustments
-
-**Concrete example:** When building a `pdf-editor` skill for queries like "Help me rotate this PDF":
-1. Rotating a PDF requires re-writing the same code each time
-2. A `scripts/rotate_pdf.py` script solves this — write once, execute many times
-
-**How to spot script candidates:** After running test cases, read the transcripts. If all test runs independently wrote similar helper code (e.g., each created a `create_docx.py`), that's a strong signal to bundle that script. Write once, use on every invocation.
+Use scripts for repeated deterministic work such as calculation, transformation, or scaffolding.
+Do not use them to validate model judgment or police the skill's own output. A bundled script
+should handle its mechanical errors and expose a clear invocation contract.
 
 #### References (`references/`)
 
 Content needed in some execution paths, not all. If the skill branches (multiple operations, domains, modes) — each branch's details go to a reference. Content needed on every execution stays in SKILL.md.
 
-**Example:** Task-management skill handles "create" and "edit". Each operation's workflow → separate reference. Task file format used by both → stays in SKILL.md.
-
 - **No duplication**: Content lives in either SKILL.md or references, not both
 
 **How to link references in SKILL.md:**
 
-Embed references in workflow where they're logically needed. Two linking patterns, ranked by strength:
+Embed references where they are used:
 
 **Pattern A: Action-embedded (strong)** — the workflow step's action IS applying the reference content. The agent cannot complete the step without loading the file.
 
@@ -235,8 +221,6 @@ Embed references in workflow where they're logically needed. Two linking pattern
    (code examples, obvious content, generic explanations)
 ```
 
-Why it works: "follow patterns from X" or "apply criteria from X" makes the reference part of the action, not a separate read-then-do instruction.
-
 **Pattern B: Condition + contents (basic)** — for optional references needed only in specific scenarios. Each link explains WHEN to read and WHAT's inside.
 
 ```markdown
@@ -244,9 +228,8 @@ Why it works: "follow patterns from X" or "apply criteria from X" makes the refe
 **First time with docx-js?** Read [DOCX-JS.md] — setup, examples, pitfalls.
 ```
 
-Use Pattern A for references that contain rules/patterns the agent must follow during a step. Use Pattern B for references that are only relevant in certain branches of the workflow.
-
-**Anti-pattern: Resource catalog at end of file.** A passive list of references separated from the workflow. The agent reads the workflow top-down, gets instructions, and treats the catalog as optional appendix.
+Use Pattern A for required rules and Pattern B for conditional details. Do not put references in a
+passive resource catalog separated from the workflow.
 
 ```markdown
 ❌ Bad — passive catalog (ignored):
@@ -260,50 +243,14 @@ Quality principles...
 4. Apply audit criteria from [principles.md](references/principles.md) to each file
 ```
 
-**Bad** (passive, no trigger):
-- `Detailed guide: [X.md]`
-- `See [X.md] for details`
-- `Finance: [finance.md]` (no context why to read)
-
-**Good** (embedded in action or conditional):
-- `3. Write tests following patterns from [testing-guide.md]` (action-embedded)
-- `**Working with finance?** Read [finance.md] — P&L rules, ARR formulas` (conditional)
-- `4. Apply criteria from [principles.md] to each file` (action-embedded)
-
 #### Assets (`assets/`)
 
 Files not intended to be loaded into context, but rather used within the output Claude produces.
 
-- **When to include**: When the skill needs files that will be used in the final output
-- **Examples**: `assets/logo.png` for brand assets, `assets/slides.pptx` for PowerPoint templates, `assets/frontend-template/` for HTML/React boilerplate
-- **Use cases**: Templates, images, icons, boilerplate code, fonts, sample documents that get copied or modified
-- **Benefits**: Separates output resources from documentation, enables Claude to use files without loading them into context
-
-**Concrete example:** When designing a `frontend-webapp-builder` skill for queries like "Build me a todo app":
-1. Writing a frontend webapp requires the same boilerplate HTML/React each time
-2. An `assets/hello-world/` template with boilerplate project files solves this — copy and customize
+Use assets for templates, images, fonts, boilerplate, and other files copied or modified in the
+output rather than read as instructions.
 
 ## 3. Writing Guidelines
-
-### Concise is Key
-
-The context window is a public good. Skills share the context window with everything else Claude needs: system prompt, conversation history, other Skills' metadata, and the actual user request.
-
-**Default assumption: Claude is already very smart.** Only add context Claude doesn't already have. Challenge each piece of information: "Does Claude really need this explanation?" and "Does this paragraph justify its token cost?"
-
-Prefer concise examples over verbose explanations.
-
-### Keep it Lean
-
-Remove things that aren't pulling their weight. After running test cases, read the transcripts — not just the final outputs. If the skill is making the model waste time doing unproductive things, remove those parts of the skill.
-
-Every instruction has a cost. If removing an instruction doesn't degrade results, it was dead weight.
-
-### Generalize, Don't Overfit
-
-Skills are used across many different prompts and contexts. When iterating on a skill based on test results, resist fiddly changes targeted at specific examples. Rather than oppressively constrictive rules, try branching out — use different metaphors, recommend different patterns of working. It's cheap to try and you might land on something better.
-
-If a skill works only for its test cases, it's useless at scale.
 
 ### Degrees of Freedom
 
@@ -327,190 +274,93 @@ Skills use a three-level loading system to manage context efficiently:
 
 Keep SKILL.md body under 500 lines. Split content into separate files when approaching this limit. When splitting, reference them from SKILL.md and describe clearly when to read them.
 
-**Key principle:** When a skill supports multiple variations, frameworks, or options, keep only the core workflow and selection guidance in SKILL.md. Move variant-specific details into separate reference files.
-
-**Pattern 1: High-level guide with references**
-
-```markdown
-# PDF Processing
-
-## Quick start
-Extract text with pdfplumber:
-[code example]
-
-## Advanced features
-
-**For form filling?** Read [FORMS.md](FORMS.md) — interactive fields, validation, PDF/A.
-
-For complete API reference, see [REFERENCE.md](REFERENCE.md) — all methods with examples.
-```
-
-Claude loads FORMS.md or REFERENCE.md only when needed.
-
-**Pattern 2: Domain-specific organization**
-
-For skills with multiple domains, organize content by domain:
-
-```
-bigquery-skill/
-├── SKILL.md (overview and navigation)
-└── references/
-    ├── finance.md (revenue, billing metrics)
-    ├── sales.md (opportunities, pipeline)
-    └── product.md (API usage, features)
-```
-
-In SKILL.md, link each domain with description:
-
-**When working with finance data**, read [finance.md](references/finance.md) — P&L rules, revenue calculations, ARR formulas.
-
-For sales data analysis, see [sales.md](references/sales.md) — opportunity stages, pipeline calculations, account hierarchies.
-
-**Working with product metrics?** Read [product.md](references/product.md) — API usage tracking, feature adoption, user segments.
-
-**Pattern 3: Conditional details**
+Keep core workflow and selection guidance in SKILL.md. Move conditional or variant-specific
+details into references, linked where the agent needs them.
 
 ```markdown
-# DOCX Processing
-
-## Creating documents
-Use docx-js for basic operations.
-
-**First time with docx-js?** Read [DOCX-JS.md](DOCX-JS.md) — setup, examples, pitfalls.
-
-## Editing documents
-For simple edits, modify XML directly.
-
-For tracked changes, see [REDLINING.md](REDLINING.md) — revision marks, accept/reject logic.
+**For tracked changes**, read [redlining.md](references/redlining.md) — revision marks and
+accept/reject behavior.
 ```
 
 **Important guidelines:**
 - Keep references one level deep from SKILL.md
-- For files longer than 100 lines, include a table of contents at the top
+- For large reference files (roughly over 300 lines), include a short table of contents when it
+  materially improves navigation
 
-### Writing Approach
+### Generalize and Explain Why
 
-Start by writing a draft, then look at it with fresh eyes and improve. Use theory of mind — make the skill general, not super-narrow to specific examples. Try to explain to the model why things are important in lieu of heavy-handed constraints.
+Treat an incident as evidence, not as a rule template. Remove its names, artifacts, and exact
+sequence; if no reusable decision remains across multiple realistic uses, fix the execution or
+local artifact instead of changing the skill. Keep incident-specific guidance only for an
+established contract or a security, authorization, data-loss, or irreversible-action boundary.
 
-### Positive over Negative
+Refer to the person the skill serves as "the user" and keep their personal facts (name, accounts,
+home-directory paths) in the project's documented context, such as Project Knowledge, not in skill
+text: skills are reused across projects and people, and a hardcoded owner makes them wrong or
+leaky elsewhere.
 
-Default to positive instructions — they're followed more reliably. Rewrite negatives when the positive form fully conveys the meaning.
+Prefer positive instructions when they fully convey the rule. Keep explicit negatives for
+security, irreversible damage, disambiguation, and scope boundaries.
 
-**Rewrite when positive form is sufficient:**
-- "Don't use bullet points" → "Write in prose paragraphs"
-- "Don't use var" → "Use const/let"
-
-**Keep negatives for hard boundaries** where the positive rewrite loses the prohibition:
-- Security: "Store secrets in .env" alone doesn't convey "never commit them to git" — you need both
-- Irreversible damage: "Don't use `--force` on shared branches" — the cost of violation is high
-- Disambiguation: "Use `Array.from()`, not spread for NodeList" — negative clarifies which similar option is wrong
-- Scope limits: "This skill does not handle deployment" — defines boundary
-
-**Test:** "Does the positive rewrite fully convey the prohibition?" If no → keep the negative + add motivation (WHY it matters).
-
-### Explain the Why
-
-Today's LLMs are smart. They have good theory of mind and when given a good harness can go beyond rote instructions. Try to explain the **why** behind everything you're asking the model to do. Even if user feedback is terse, try to actually understand the task and why the user wrote what they wrote, then transmit this understanding into the instructions.
+Explain why a non-obvious instruction matters so the agent can apply it correctly beyond the
+example:
 
 **Bad:** "Always return JSON format."
 **Good:** "Return findings as JSON — orchestrator parses this automatically, invalid JSON crashes pipeline."
 
-When explaining is impractical, keep the rule as-is. But default to reasoning over commanding.
-
-### Avoid Emphasis Words
-
-Words like CRITICAL, MANDATORY, NEVER, IMPORTANT, MUST are anti-patterns in skills.
-
-**Why they don't work:**
-- Every instruction in a skill is already important — if it wasn't, it shouldn't be there
-- When everything is emphasized — nothing stands out
-- Emphasis words signal poorly written instructions that need rewriting, not shouting
-
-**What to do instead:**
-- Write clear, specific instructions
-- Explain why something matters (see "Explain the Why" above)
-- Use structure (steps, checkpoints) to ensure compliance
-
-If you find yourself writing ALWAYS or NEVER in all caps, that's a yellow flag — reframe and explain the reasoning so that the model understands why the thing you're asking for is important.
-
-**Hard limit:** Maximum one emphasis word per skill. Ideal: zero.
+Words such as CRITICAL, MANDATORY, NEVER, IMPORTANT, and MUST do not replace a clear instruction
+and its reason. Flag emphasis only when it creates noise, substitutes for motivation, or makes
+priorities conflict.
 
 ### Delegating Heavy Work
 
-If skill has context-heavy tasks (reviews, research, validation):
-- Keep each skill focused on a single methodology
-- Delegate heavy subtasks to agents with fresh context
-- Orchestrator calls agents → they work isolated → return results
-
-**When to use subagents:**
-- **Reviews** — code-reviewer, security-auditor, test-reviewer check work with fresh context
-- **Research** — exploring codebase, reading documentation, searching information
-- **Debugging** — isolated context for error diagnosis and root cause analysis
-- **Validation** — checking schemas, formats, requirements compliance
-- **Parallel tasks** — multiple independent investigations simultaneously
-- **High-volume output** — tests, logs, reports that would bloat main context
-
-**Two approaches:**
-
-1. **Inline prompts** — for simple, one-off tasks (<50 lines):
-   ```
-   Use general-purpose/explore/plan subagent to find all TypeScript files importing {module}
-   ```
-
-2. **Skill + Agent pattern** — for complex, reusable tasks (>50 lines):
-   - **Skill** holds methodology (WHAT to do, HOW to analyze)
-   - **Agent** adds isolation + output format (runs in isolated context)
-   - Agent uses `skills:` field to preload methodology
-   - Reference by name: "Use `code-reviewer` agent"
-
-**Key principle:** Keep detailed agent prompts out of SKILL.md. Large prompts bloat the skill and waste context. Store specialized agent definitions separately; the skill just invokes them.
-
-**Delegating work to subagent?** Read [agents.md](references/agents.md) — inline prompts, dedicated agents, output contracts.
-
-**Checkpoint:** Writing guidelines applied. Skill is concise, well-structured, references linked properly.
+Use subagents when fresh isolated context materially helps review, research, debugging, validation,
+parallel work, or high-volume analysis. Use an inline prompt for a bounded one-off task and a
+dedicated Skill + Agent only for substantial reusable methodology. Keep detailed agent contracts
+out of SKILL.md. Apply [agents.md](references/agents.md) when delegating work or creating a
+reviewer.
 
 ## 4. Validation
 
-### Run skill-checker
+### Run Applicable Reviewers
 
-After self-check — run validation:
+Launch fresh skeptical reviewers according to what changed. Each applies the common contract from
+[agents.md → Reviewer contract](references/agents.md):
 
+- `skill-checker` — form, routing, package structure, and references;
+- `skill-logic-reviewer` — executable logic on required paths and established contracts;
+- `skill-simplicity-reviewer` — unnecessary rules, mechanisms, checks, and complexity.
+
+Use `skill-checker` for form or routing changes, `skill-logic-reviewer` for workflow or branching
+changes, and `skill-simplicity-reviewer` when changing rules, phases, checkpoints, scripts, options,
+or references. Run all three in parallel for a new skill or a major rewrite. Do not run an
+unaffected lane merely to satisfy ceremony.
+
+Provide the user scope, touched artifacts, relevant references and contracts, validation evidence,
+and a short explanation of what changed, how the skill will affect agent behavior, why this
+approach was chosen, deliberate limits, and assumptions. Reviewers may challenge the chosen
+approach or propose alternatives within their lane. After reviewers return, apply no finding and
+do not repeat the review automatically. Explain what changed in the skill and how it will affect
+agent behavior, then what reviewers found, what it can cause, whether you agree and why, and what
+you recommend. Wait for the user's approval before editing.
+
+All three are defined under `~/.claude/agents/` and have skill-master preloaded.
+
+### Check Triggering
+
+After applying a description change that affects routing, check it in fresh sessions; the
+authoring session already holds the skill in context and hides gaps. From the directory where
+each would normally be asked, run the request that exposed the miss, one or two realistic
+requests (including one where the skill is a step of a larger task), and one near-miss that
+belongs to a neighboring skill:
+
+```bash
+claude -p "<request>" --output-format stream-json --verbose --max-turns 4 \
+  --permission-mode plan --no-session-persistence \
+  | grep -oE '"skill":"[^"]*"|"terminal_reason":"[^"]*"'
 ```
-Use skill-checker subagent to validate the skill at {path}.
-If issues found → fix them → run skill-checker again.
-```
 
-skill-checker is defined in `~/.claude/agents/skill-checker.md` and has skill-master preloaded.
-
-### Test the Skill
-
-After creating or significantly updating a skill, suggest to the user to run skill-tester on it. skill-tester will design test cases, run them with and without the skill, test description triggering accuracy, and produce a report with specific improvement recommendations.
-
-### Self-Check Before Validation
-
-**Universal (all skills):**
-- [ ] name in kebab-case, ≤64 chars
-- [ ] description < 1024 chars, includes "Use when:" with trigger phrases
-- [ ] SKILL.md < 500 lines
-- [ ] All referenced files exist
-- [ ] No extra docs (README, CHANGELOG)
-- [ ] References contain only conditional content (not needed on every execution path)
-- [ ] References linked as action steps or with condition + contents (no passive links, no resource catalogs at end of file)
-- [ ] Defaults to positive instructions. Negatives only for hard boundaries (security, irreversible damage, disambiguation, scope limits) with motivation
-- [ ] No emphasis words (CRITICAL, MANDATORY, NEVER) — max one allowed
-
-**Identify skill type:** procedural or informational?
-
-**If Procedural:**
-- [ ] Has explicit phases with numbered steps
-- [ ] Has checkpoints after each phase
-- [ ] Has self-verification section at end
-- [ ] Uses subagent verification for critical operations (if applicable)
-
-**If Informational:**
-- [ ] Sections organized by logic, not sequence
-- [ ] Decision frameworks present (YES if / NO if) where applicable
-- [ ] No forced sequential structure
-
-**Functional (all skills):**
-- [ ] Run skill-checker and fix all issues
+Each run prints the skills it loaded and how it ended. A run that ended with an API or
+authentication error (`"terminal_reason":"api_error"`) did not test routing: stop and tell the
+user instead of counting it as a miss. Repeat the request that exposed the miss a few times.
+Routing is probabilistic: report the results to the user as evidence, not as a guarantee.

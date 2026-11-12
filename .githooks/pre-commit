@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+SOURCE_PATHS=(CLAUDE.md skills agents commands)
+CODEX_PATHS=(AGENTS.md .agents/skills .codex/agents .codex/skills .codex/AGENTS.md)
+
+if git diff --cached --quiet -- "${SOURCE_PATHS[@]}"; then
+  python3 .githooks/sync-runtime.py --check
+  exit 0
+fi
+
+if ! git diff --quiet -- "${SOURCE_PATHS[@]}" ||
+  [ -n "$(git ls-files --others --exclude-standard -- "${SOURCE_PATHS[@]}")" ]; then
+  echo "pre-commit: Claude source changes are only partially staged. Stage all intended source changes first." >&2
+  exit 1
+fi
+
+python3 .githooks/sync-runtime.py --apply
+for path in "${CODEX_PATHS[@]}"; do
+  if [ -e "$path" ] || [ -L "$path" ] || git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+    git add -A -- "$path"
+  fi
+done
+python3 .githooks/sync-runtime.py --check
